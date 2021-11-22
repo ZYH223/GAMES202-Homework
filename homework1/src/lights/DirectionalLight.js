@@ -33,7 +33,7 @@ class DirectionalLight {
         mat4.lookAt(viewMatrix, lightPos, focalPoint, lightUp);
         // Projection transform
         const aspect = 1;
-        const size = 500.0;
+        const size = 250.0;
         mat4.ortho(projectionMatrix,
             -aspect * size/2,
             aspect * size/2,
