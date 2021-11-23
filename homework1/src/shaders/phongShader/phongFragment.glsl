@@ -27,7 +27,7 @@ varying highp vec3 vNormal;
 // PCF & PCSS related variables
 #define lightSize 1.0
 #define textureSize 250.0
-#define filterSize 3.0
+#define filterSize 5.0
 #define delta 0.01
 //0.00390625
 
@@ -159,8 +159,8 @@ float PCSS(sampler2D shadowMap, vec4 coords){
     coord = clamp(coord + PCFSize * poissonDisk[i], 0.0, 1.0);
     // coord = clamp(coord, 0.0, 1.0);
     occludedDepth = unpack(texture2D(shadowMap, coord));
-    if (occludedDepth < EPS) visibility += 1.0;
-    else if(currentDepth > occludedDepth + delta)
+    /*if (occludedDepth < EPS) visibility += 1.0;
+    else */if(currentDepth > occludedDepth + delta)
       visibility += 0.0;
     else visibility += 1.0;
   }
@@ -209,14 +209,14 @@ void main(void) {
   vec4 shadowCoord = vPositionFromLight / vPositionFromLight.w;
   shadowCoord = 0.5 * (shadowCoord + 1.0);
   // shadowCoord = clamp(shadowCoord, 0.0, 1.0);
-  if (shadowCoord.x < 0.0 || shadowCoord.x > 1.0
-  || shadowCoord.y < 0.0 || shadowCoord.y > 1.0)
-    visibility = 1.0;
   
   // visibility = useShadowMap(uShadowMap, shadowCoord);
   // visibility = PCF(uShadowMap, shadowCoord);
   visibility = PCSS(uShadowMap, shadowCoord);
-  visibility = clamp(visibility, 0.3, 0.95);
+  // visibility = clamp(visibility, 0.3, 0.95);
+  if (shadowCoord.x < 0.0 || shadowCoord.x > 1.0
+  || shadowCoord.y < 0.0 || shadowCoord.y > 1.0)
+    visibility = 1.0;
 
   vec3 phongColor = blinnPhong();
   // highp float depth = unpack(texture2D(uShadowMap, vTextureCoord));
