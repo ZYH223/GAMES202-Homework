@@ -129,6 +129,16 @@ namespace ProjEnv
                     int index = (y * width + x) * channel;
                     Eigen::Array3f Le(images[i][index + 0], images[i][index + 1],
                                       images[i][index + 2]);
+                    // 将Lighting项投影到SH基函数上的过程可以通过黎曼积分来完成而避免了对球面空间采样
+                    for (int l = 0; l <= SHOrder; l++)
+                    {
+                        for (int m = -l; m <= l; m++)
+                        {
+                            SHCoeffiecents[i] += Le
+                                * CalcArea(((float)x) / width, ((float)y) / height, width, height)
+                                * sh::EvalSH(l, m, dir.cast<double>().normalized()) ;
+                        }
+                    }
                 }
             }
         }
@@ -203,31 +213,104 @@ public:
         {
             const Point3f &v = mesh->getVertexPositions().col(i);
             const Normal3f &n = mesh->getVertexNormals().col(i);
+            // shFunc的作用是定义Lighting Transport项，能够根据传入的theta和phi计算出传输项结果
             auto shFunc = [&](double phi, double theta) -> double {
                 Eigen::Array3d d = sh::ToVector(phi, theta);
                 const auto wi = Vector3f(d.x(), d.y(), d.z());
+                const auto diffuse = std::max(n.dot(wi), 0.0f);
                 if (m_Type == Type::Unshadowed)
                 {
                     // TODO: here you need to calculate unshadowed transport term of a given direction
                     // TODO: 此处你需要计算给定方向下的unshadowed传输项球谐函数值
-                    return 0;
+
+                    // 仅考虑Diffuse的BRDF，直接返回漫反射结果，其传输项如下
+                    return diffuse;
                 }
                 else
                 {
                     // TODO: here you need to calculate shadowed transport term of a given direction
                     // TODO: 此处你需要计算给定方向下的shadowed传输项球谐函数值
-                    return 0;
+
+                    // 考虑Shadowed Diffuse的情况，需要通过光线投射判断Visibility
+                    nori::Ray3f ray(v, wi);
+                    auto visibility = 1.0f, u = 0.0f, v = 0.0f, t = 0.0f;
+                    for (auto triangle_index = 0; triangle_index < mesh->getTriangleCount(); triangle_index++)
+                    {
+                        if (mesh->rayIntersect(triangle_index, ray, u, v, t))
+                        {
+                            visibility = 0.0f;
+                            break;
+                        }
+                    }
+                    return diffuse * visibility;
                 }
             };
+            // 将传输项投影到SH基函数空间需要对球面空间进行采样
             auto shCoeff = sh::ProjectFunction(SHOrder, shFunc, m_SampleCount);
             for (int j = 0; j < shCoeff->size(); j++)
             {
                 m_TransportSHCoeffs.col(i).coeffRef(j) = (*shCoeff)[j];
             }
         }
-        if (m_Type == Type::Interreflection)
+        if (m_Type == Type::Interreflection)// 如果Interreflection启动，则计算间接光照
         {
             // TODO: leave for bonus
+            // 要实现Interreflection，就要通过两次以上的光线传输过程来计算光线传输项
+            // 首先计算直接光照的球协系数，然后根据迭代求出间接光照的球协系数
+            auto currentTransportSHCoeffs = Eigen::MatrixXf(m_TransportSHCoeffs);
+            // 直接光照传输Td，n-bounce间接光照传输Ti(n)
+            // 第n次迭代用Td+Ti(n-1)生成Ti(n)
+            const int maxBounces = 2;
+            for (int bounce = 1; bounce <= maxBounces; bounce++)
+            {
+                for (int i = 0; i < mesh->getVertexCount(); i++)
+                {
+                    const Point3f& v = mesh->getVertexPositions().col(i);
+                    const Normal3f& n = mesh->getVertexNormals().col(i);
+
+                    auto shFunc = [&](double phi, double theta) -> double {
+                        Eigen::Array3d d = sh::ToVector(phi, theta);
+                        const auto wi = Vector3f(d.x(), d.y(), d.z());
+                        Ray3f ray(v, wi);
+                        auto u = 0.0f, v = 0.0f, t = 0.0f;
+                        auto hit_u = u, hit_v = v, hit_t = t;
+                        // 在场景搜索沿当前方向是否存在遮挡物
+                        for (auto triangle_index = 0; triangle_index < mesh->getTriangleCount(); triangle_index++)
+                        {
+                            if (mesh->rayIntersect(triangle_index, ray, u, v, t) && t + 1e-8f < hit_t)// found a nearer object hitted
+                            {
+                                hit_u = u, hit_v = v, hit_t = t;
+                            }
+                        }
+                        // 如果存在遮挡物就计算间接光照传输项
+                        if (hit_t > 1e-8f)// the light is indirect
+                        {
+                            const auto diffuse = std::max(n.dot(wi), 0.0f);
+                            double transportReflected = 0;
+                            // 根据Td+Ti(n-1)的SH系数计算出被反射的传输项的结果
+                            for (int l = 0; l <= SHOrder; l++) {
+                                for (int m = -l; m <= l; m++) {
+                                    transportReflected += currentTransportSHCoeffs.col(i).coeffRef(sh::GetIndex(l, m)) * sh::EvalSH(l, m, phi, theta);
+                                }
+                            }
+                            // 被反射的传输项，乘以cos项就是间接光照的传输项
+                            return diffuse * transportReflected;
+                        }
+                        // the light is direct then return 0, cause this is the computation for indirect shading
+                        return 0;
+                    };
+                    // 将传输项投影到SH基函数空间需要对球面空间进行采样
+                    auto shCoeff = sh::ProjectFunction(SHOrder, shFunc, m_SampleCount);
+                    for (int j = 0; j < shCoeff->size(); j++)
+                    {
+                        // 此时的currentTransportSHCoeffs表示由Td+Ti(n-1)生成的Ti(n)
+                        currentTransportSHCoeffs.col(i).coeffRef(j) = (*shCoeff)[j];
+                    }
+                    // 将Td+Ti(n)作为下一次迭代（生成Ti(n+1)）需要的SH系数
+                    currentTransportSHCoeffs = m_TransportSHCoeffs + currentTransportSHCoeffs;
+                }
+            }
+            m_TransportSHCoeffs = currentTransportSHCoeffs;
         }
 
         // Save in face format
