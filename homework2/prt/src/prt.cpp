@@ -129,14 +129,14 @@ namespace ProjEnv
                     int index = (y * width + x) * channel;
                     Eigen::Array3f Le(images[i][index + 0], images[i][index + 1],
                                       images[i][index + 2]);
+                    auto deltaArea = CalcArea(((float)x) / width, ((float)y) / height, width, height);
+                    auto dirNormalized = dir.cast<double>().normalized();
                     // 将Lighting项投影到SH基函数上的过程可以通过黎曼积分来完成而避免了对球面空间采样
                     for (int l = 0; l <= SHOrder; l++)
                     {
                         for (int m = -l; m <= l; m++)
                         {
-                            SHCoeffiecents[i] += Le
-                                * CalcArea(((float)x) / width, ((float)y) / height, width, height)
-                                * sh::EvalSH(l, m, dir.cast<double>().normalized()) ;
+                            SHCoeffiecents[i] += Le * deltaArea * sh::EvalSH(l, m, dirNormalized);
                         }
                     }
                 }
@@ -209,6 +209,11 @@ public:
         // Projection transport
         m_TransportSHCoeffs.resize(SHCoeffLength, mesh->getVertexCount());
         fout << mesh->getVertexCount() << std::endl;
+        m_Type = Type::Unshadowed;
+        if (m_Type == Type::Unshadowed) std::cout << "Unshadowed" << std::endl;
+        else if (m_Type == Type::Interreflection) std::cout << "Interreflection" << std::endl;
+        else if (m_Type == Type::Shadowed) std::cout << "Shadowed" << std::endl;
+        else  std::cout << "Unknown" << std::endl;
         for (int i = 0; i < mesh->getVertexCount(); i++)
         {
             const Point3f &v = mesh->getVertexPositions().col(i);
@@ -358,10 +363,10 @@ public:
         // TODO: you need to delete the following four line codes after finishing your calculation to SH,
         //       we use it to visualize the normals of model for debug.
         // TODO: 在完成了球谐系数计算后，你需要删除下列四行，这四行代码的作用是用来可视化模型法线
-        if (c.isZero()) {
+        /*if (c.isZero()) {
             auto n_ = its.shFrame.n.cwiseAbs();
             return Color3f(n_.x(), n_.y(), n_.z());
-        }
+        }*/
         return c;
     }
 
