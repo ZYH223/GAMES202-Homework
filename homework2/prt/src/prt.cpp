@@ -129,7 +129,8 @@ namespace ProjEnv
                     int index = (y * width + x) * channel;
                     Eigen::Array3f Le(images[i][index + 0], images[i][index + 1],
                                       images[i][index + 2]);
-                    auto deltaArea = CalcArea(((float)x) / width, ((float)y) / height, width, height);
+                    auto deltaArea = CalcArea((float)x, (float)y, width, height);
+                    //auto deltaArea = CalcArea(((float)x) / width, ((float)y) / height, width, height);
                     auto dirNormalized = dir.cast<double>().normalized();
                     // 将Lighting项投影到SH基函数上的过程可以通过黎曼积分来完成而避免了对球面空间采样
                     for (int l = 0; l <= SHOrder; l++)
@@ -140,6 +141,7 @@ namespace ProjEnv
                         }
                     }
                 }
+                std::cout << 100.0f * (float)(i * height + y) / (6 * height) << "%\r";
             }
         }
         return SHCoeffiecents;
@@ -209,11 +211,12 @@ public:
         // Projection transport
         m_TransportSHCoeffs.resize(SHCoeffLength, mesh->getVertexCount());
         fout << mesh->getVertexCount() << std::endl;
-        m_Type = Type::Unshadowed;
+        //m_Type = Type::Unshadowed;
         if (m_Type == Type::Unshadowed) std::cout << "Unshadowed" << std::endl;
         else if (m_Type == Type::Interreflection) std::cout << "Interreflection" << std::endl;
         else if (m_Type == Type::Shadowed) std::cout << "Shadowed" << std::endl;
         else  std::cout << "Unknown" << std::endl;
+        std::cout << "Direct Illumination" << std::endl;
         for (int i = 0; i < mesh->getVertexCount(); i++)
         {
             const Point3f &v = mesh->getVertexPositions().col(i);
@@ -222,7 +225,7 @@ public:
             auto shFunc = [&](double phi, double theta) -> double {
                 Eigen::Array3d d = sh::ToVector(phi, theta);
                 const auto wi = Vector3f(d.x(), d.y(), d.z());
-                const auto diffuse = std::max(n.dot(wi), 0.0f);
+                const auto diffuse = /*(1/M_PI) */std::max(n.dot(wi), 0.0f);
                 if (m_Type == Type::Unshadowed)
                 {
                     // TODO: here you need to calculate unshadowed transport term of a given direction
@@ -237,70 +240,100 @@ public:
                     // TODO: 此处你需要计算给定方向下的shadowed传输项球谐函数值
 
                     // 考虑Shadowed Diffuse的情况，需要通过光线投射判断Visibility
-                    nori::Ray3f ray(v, wi);
-                    auto visibility = 1.0f, u = 0.0f, v = 0.0f, t = 0.0f;
-                    for (auto triangle_index = 0; triangle_index < mesh->getTriangleCount(); triangle_index++)
-                    {
-                        if (mesh->rayIntersect(triangle_index, ray, u, v, t))
-                        {
-                            visibility = 0.0f;
-                            break;
-                        }
-                    }
-                    return diffuse * visibility;
+                    Ray3f ray(v, wi.normalized());
+                    if (scene->rayIntersect(ray)) return 0.0f;
+                    else return diffuse;
                 }
             };
             // 将传输项投影到SH基函数空间需要对球面空间进行采样
+            /*int vindex[] { 5594, 5597, 5596, 5000, 5011, 5073 };
+            int shindex[]{ 0, 2 };*/
             auto shCoeff = sh::ProjectFunction(SHOrder, shFunc, m_SampleCount);
             for (int j = 0; j < shCoeff->size(); j++)
             {
                 m_TransportSHCoeffs.col(i).coeffRef(j) = (*shCoeff)[j];
+                /*for (int tvi = 0; tvi < 6; tvi++)
+                    for (int tsi = 0; tsi < 2; tsi++)
+                        if (i == vindex[tvi] && j == shindex[tsi])
+                            std::cout << "(v" << vindex[tvi] << ",sh" << shindex[tsi] << "):" << m_TransportSHCoeffs.col(i).coeffRef(j) << std::endl;*/
+                //if (std::abs((*shCoeff)[j]) > 1.0f) std::cout << (*shCoeff)[j] << std::endl;
             }
+            std::cout << 100.0f * (float)i / mesh->getVertexCount() << "%\r";
         }
+        // TODO 目前还存在bug
         if (m_Type == Type::Interreflection)// 如果Interreflection启动，则计算间接光照
         {
+            std::cout << "Indirect Illumination" << std::endl;
             // TODO: leave for bonus
             // 要实现Interreflection，就要通过两次以上的光线传输过程来计算光线传输项
             // 首先计算直接光照的球协系数，然后根据迭代求出间接光照的球协系数
+
+            // 初始化迭代所需的传输项SH系数
             auto currentTransportSHCoeffs = Eigen::MatrixXf(m_TransportSHCoeffs);
+            /*int vindex[]{ 5594, 5597, 5596, 5000, 5011, 5073 };
+            int shindex[]{ 0, 2 };
+            for (int tvi = 0; tvi < 6; tvi++)
+                for (int tsi = 0; tsi < 2; tsi++)
+                    std::cout << "(v" << vindex[tvi] << ",sh" << shindex[tsi] << "):" 
+                    << m_TransportSHCoeffs.col(vindex[tvi]).coeffRef(shindex[tsi]) 
+                    << "-" << currentTransportSHCoeffs.col(vindex[tvi]).coeffRef(shindex[tsi]) << std::endl;*/
             // 直接光照传输Td，n-bounce间接光照传输Ti(n)
-            // 第n次迭代用Td+Ti(n-1)生成Ti(n)
-            const int maxBounces = 2;
-            for (int bounce = 1; bounce <= maxBounces; bounce++)
+            // 第n次迭代，用Td+Ti(n-1)生成Ti(n)
+            const int maxBounces = 1;
+            for (int bounce = 0; bounce < maxBounces; bounce++)
             {
                 for (int i = 0; i < mesh->getVertexCount(); i++)
                 {
+                    // 跳过所有已经有直接光照结果的点，只计算直接光照中被遮挡的点
+                    // 一般直接光照中visibility不为0的点是有SH系数结果的
+                    if (std::abs(m_TransportSHCoeffs.col(i).coeffRef(0)) > 1e-8f) {
+                        //std::cout << i << " skipped" << std::endl;
+                        continue;
+                    }
                     const Point3f& v = mesh->getVertexPositions().col(i);
                     const Normal3f& n = mesh->getVertexNormals().col(i);
-
+                    // 定义用于计算要投影的原函数
                     auto shFunc = [&](double phi, double theta) -> double {
                         Eigen::Array3d d = sh::ToVector(phi, theta);
                         const auto wi = Vector3f(d.x(), d.y(), d.z());
                         Ray3f ray(v, wi);
-                        auto u = 0.0f, v = 0.0f, t = 0.0f;
-                        auto hit_u = u, hit_v = v, hit_t = t;
-                        // 在场景搜索沿当前方向是否存在遮挡物
-                        for (auto triangle_index = 0; triangle_index < mesh->getTriangleCount(); triangle_index++)
+                        Intersection its;
+                        // 如果存着遮挡，则计算间接光照结果
+                        if (scene->rayIntersect(ray, its))
                         {
-                            if (mesh->rayIntersect(triangle_index, ray, u, v, t) && t + 1e-8f < hit_t)// found a nearer object hitted
-                            {
-                                hit_u = u, hit_v = v, hit_t = t;
-                            }
-                        }
-                        // 如果存在遮挡物就计算间接光照传输项
-                        if (hit_t > 1e-8f)// the light is indirect
-                        {
+                            float transportReflected = 0.0f;
                             const auto diffuse = std::max(n.dot(wi), 0.0f);
-                            double transportReflected = 0;
+                            const auto bx = its.bary.x(); const auto by = its.bary.y(); const auto bz = its.bary.z();
+                            const auto& tpx = currentTransportSHCoeffs.col(its.tri_index.x());
+                            const auto& tpy = currentTransportSHCoeffs.col(its.tri_index.y());
+                            const auto& tpz = currentTransportSHCoeffs.col(its.tri_index.z());
                             // 根据Td+Ti(n-1)的SH系数计算出被反射的传输项的结果
                             for (int l = 0; l <= SHOrder; l++) {
                                 for (int m = -l; m <= l; m++) {
-                                    transportReflected += currentTransportSHCoeffs.col(i).coeffRef(sh::GetIndex(l, m)) * sh::EvalSH(l, m, phi, theta);
+                                    auto shIndex = sh::GetIndex(l, m);
+                                    auto shValue = sh::EvalSH(l, m, phi, theta);
+                                    const auto coeff = bx * currentTransportSHCoeffs.col(its.tri_index.x()).coeffRef(shIndex)
+                                        + by * currentTransportSHCoeffs.col(its.tri_index.y()).coeffRef(shIndex)
+                                        + bz * currentTransportSHCoeffs.col(its.tri_index.z()).coeffRef(shIndex);
+                                    transportReflected += coeff * shValue;
+
+                                    /*if (std::abs(coeff) > 1.0f) {
+                                        std::cout << "\tsh" << shIndex << ":" << coeff * shValue << "= ("
+                                            << bx << "*" << tpx.coeffRef(shIndex) << "+" << by << "*" << tpy.coeffRef(shIndex) << "+" << bz << "*" << tpz.coeffRef(shIndex)
+                                            << ")*" << shValue << std::endl;
+                                        std::cout << "\t\t(v" << its.tri_index.x() << ",sh" << shIndex << "):" << tpx.coeffRef(shIndex)
+                                            << "\t(v" << its.tri_index.y() << ",sh" << shIndex << "):" << tpy.coeffRef(shIndex)
+                                            << "\t(v" << its.tri_index.z() << ",sh" << shIndex << "):" << tpz.coeffRef(shIndex) << std::endl;
+                                    }*/
+                                    
                                 }
                             }
                             // 被反射的传输项，乘以cos项就是间接光照的传输项
+                            /*if (std::abs(diffuse * transportReflected) > 2.0f)
+                            std::cout << "indirect transport: " << diffuse * transportReflected << "=" << diffuse << "*" << transportReflected << std::endl;*/
                             return diffuse * transportReflected;
                         }
+                        // 否则间接光照结果返回0（因为未遮挡说明没有间接光照）
                         // the light is direct then return 0, cause this is the computation for indirect shading
                         return 0;
                     };
@@ -313,9 +346,11 @@ public:
                     }
                     // 将Td+Ti(n)作为下一次迭代（生成Ti(n+1)）需要的SH系数
                     currentTransportSHCoeffs = m_TransportSHCoeffs + currentTransportSHCoeffs;
+
+                    std::cout << 100.0f * (float)(i + bounce * mesh->getVertexCount()) / (maxBounces * mesh->getVertexCount()) << "%\r";
                 }
             }
-            m_TransportSHCoeffs = currentTransportSHCoeffs;
+            m_TransportSHCoeffs = currentTransportSHCoeffs - m_TransportSHCoeffs;
         }
 
         // Save in face format
@@ -353,13 +388,39 @@ public:
                                                                 sh1 = m_TransportSHCoeffs.col(its.tri_index.y()),
                                                                 sh2 = m_TransportSHCoeffs.col(its.tri_index.z());
         const Eigen::Matrix<Vector3f::Scalar, SHCoeffLength, 1> rL = m_LightCoeffs.row(0), gL = m_LightCoeffs.row(1), bL = m_LightCoeffs.row(2);
+        
+        auto dotValid = [&](Eigen::Matrix<Vector3f::Scalar, SHCoeffLength, 1> vec1, Eigen::Matrix<Vector3f::Scalar, SHCoeffLength, 1> vec2) {
+            auto sum = 0.0f;
+            for (auto i = 0; i < SHCoeffLength; i++)
+            {
+                sum += std::max(vec1[i] * vec2[i], 0.0f);
+            }
+            return sum;
+        };
 
-        Color3f c0 = Color3f(rL.dot(sh0), gL.dot(sh0), bL.dot(sh0)),
-                c1 = Color3f(rL.dot(sh1), gL.dot(sh1), bL.dot(sh1)),
-                c2 = Color3f(rL.dot(sh2), gL.dot(sh2), bL.dot(sh2));
+        Color3f c0 = Color3f(dotValid(rL, sh0), dotValid(gL, sh0), dotValid(bL, sh0)),
+            c1 = Color3f(dotValid(rL, sh1), dotValid(gL, sh1), dotValid(bL, sh1)),
+            c2 = Color3f(dotValid(rL, sh2), dotValid(gL, sh2), dotValid(bL, sh2));
+        /*std::cout << "Color:"
+            << std::endl << "c0:" << c0
+            << std::endl << "c1:" << c1
+            << std::endl << "c2:" << c2 << std::endl;*/
+        //Color3f c0 = Color3f(rL.dot(sh0), gL.dot(sh0), bL.dot(sh0)),
+        //        c1 = Color3f(rL.dot(sh1), gL.dot(sh1), bL.dot(sh1)),
+        //        c2 = Color3f(rL.dot(sh2), gL.dot(sh2), bL.dot(sh2));
 
         const Vector3f &bary = its.bary;
         Color3f c = bary.x() * c0 + bary.y() * c1 + bary.z() * c2;
+        /*std::cout << "Lighting:"
+            << std::endl << "r:" << rL 
+            << std::endl << "g:" << gL
+            << std::endl << "b:" << bL << std::endl;
+        std::cout << "Light Transport:"
+            << std::endl << "sh0:" << sh0
+            << std::endl << "sh1:" << sh1
+            << std::endl << "sh2:" << sh2 << std::endl;*/
+        /*std::cout << "Barycentric:" << bary << std::endl;
+        std::cout << "Color:" << c << std::endl;*/
         // TODO: you need to delete the following four line codes after finishing your calculation to SH,
         //       we use it to visualize the normals of model for debug.
         // TODO: 在完成了球谐系数计算后，你需要删除下列四行，这四行代码的作用是用来可视化模型法线

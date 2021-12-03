@@ -62,7 +62,23 @@ class WebGLRenderer {
                     // Bonus - Fast Spherical Harmonic Rotation
                     //let precomputeL_RGBMat3 = getRotationPrecomputeL(precomputeL[guiParams.envmapId], cameraModelMatrix);
                     
-                    
+                    let envmapId = guiParams['envmapId'];
+                    let currentPrecomputeL = precomputeL[envmapId];
+                    let nPrecomputeL = currentPrecomputeL.map(function (col, i) {
+                        return currentPrecomputeL.map(function (row) {
+                            return row[i];
+                        })
+                    });
+                    // console.log(k)
+                    if (k == 'uPrecomputeLr') {
+                        this.meshes[i].material.uniforms[k].value = nPrecomputeL[0];
+                    }
+                    if (k == 'uPrecomputeLg') {
+                        this.meshes[i].material.uniforms[k].value = nPrecomputeL[1];
+                    }
+                    if (k == 'uPrecomputeLb') {
+                        this.meshes[i].material.uniforms[k].value = nPrecomputeL[2];
+                    }                    
                 }
 
                 this.meshes[i].draw(this.camera);

@@ -1,5 +1,5 @@
 function loadOBJ(renderer, path, name, objMaterial, transform) {
-
+	
 	const manager = new THREE.LoadingManager();
 	manager.onProgress = function (item, loaded, total) {
 		console.log(item, loaded, total);
@@ -58,7 +58,18 @@ function loadOBJ(renderer, path, name, objMaterial, transform) {
 									shadowMaterial = buildShadowMaterial(light, Translation, Scale, "./src/shaders/shadowShader/shadowVertex.glsl", "./src/shaders/shadowShader/shadowFragment.glsl");
 									break;
 								// TODO: Add your PRTmaterial here
-
+								case 'PRTMaterial':
+									let envmapId = guiParams['envmapId'];
+									let currentPrecomputeL = precomputeL[envmapId];
+									let nPrecomputeL = currentPrecomputeL.map(function (col, i) {
+										return currentPrecomputeL.map(function (row) {
+											return row[i];
+										})
+									});
+									// console.log(currentPrecomputeL);
+									// console.log(nPrecomputeL);
+									material = buildPRTMaterial(nPrecomputeL[0], nPrecomputeL[1], nPrecomputeL[2], "./src/shaders/PRTShader/PRTVertex.glsl", "./src/shaders/PRTShader/PRTFragment.glsl");
+									break;
 								case 'SkyBoxMaterial':
 									material = buildSkyBoxMaterial("./src/shaders/skyBoxShader/SkyBoxVertex.glsl", "./src/shaders/skyBoxShader/SkyBoxFragment.glsl");
 									break;
