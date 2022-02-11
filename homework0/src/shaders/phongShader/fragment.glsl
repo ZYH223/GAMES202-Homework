@@ -27,7 +27,7 @@ void main(void) {
   vec3 normal = normalize(vNormal);
   float diff = max(dot(lightDir, normal), 0.0);
   float light_atten_coff = uLightIntensity / length(uLightPos - vFragPos);
-  vec3 diffuse =  diff * light_atten_coff * color;
+  vec3 diffuse =  diff * light_atten_coff * 1.0;
 
   vec3 viewDir = normalize(uCameraPos - vFragPos);
   float spec = 0.0;
@@ -35,6 +35,7 @@ void main(void) {
   spec = pow (max(dot(viewDir, reflectDir), 0.0), 35.0);
   vec3 specular = uKs * light_atten_coff * spec;  
   
-  gl_FragColor = vec4(pow((ambient + diffuse + specular), vec3(1.0/2.2)), 1.0);
+  // gl_FragColor = vec4(pow((ambient + diffuse + specular), vec3(1.0/2.2)), 1.0);
+  gl_FragColor = 1.0;
 
 }

@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#define _USE_MATH_DEFINES
 #include <cmath>
 #include <sstream>
 #include <fstream>
@@ -24,26 +25,40 @@ Vec2f Hammersley(uint32_t i, uint32_t N) { // 0-1
 }
 
 Vec3f ImportanceSampleGGX(Vec2f Xi, Vec3f N, float roughness) {
-    float a = roughness * roughness;
+    float alpha = roughness * roughness;
 
     //TODO: in spherical space - Bonus 1
-
+    float theta = atan(alpha * sqrt(Xi.x) / sqrt(1 - Xi.x));
+    float phi = 2.f * M_PI * Xi.y;
 
     //TODO: from spherical space to cartesian space - Bonus 1
- 
+    Vec3f H = Vec3f(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+    //H = SphericalToVector(theta, phi);
 
     //TODO: tangent coordinates - Bonus 1
-
+    //Calculate Tangent Space Base Vector(TBN)
+    Vec3f up = abs(N.z) < 0.999f ? Vec3f(0, 0, 1) : Vec3f(1, 0, 0);
+    Vec3f tangent = normalize(cross(up, N));
+    Vec3f bitangent = cross(N, tangent);
 
     //TODO: transform H to tangent space - Bonus 1
-    
-    return Vec3f(1.0f);
+    H = tangent * H.x + bitangent * H.y + N * H.z;
+    //float NdotH = dot(N, H);
+    //H = Vec3f(std::sqrt(1.f - NdotH * NdotH), 0.f, NdotH);
+
+    return H;
 }
 
 float GeometrySchlickGGX(float NdotV, float roughness) {
     // TODO: To calculate Schlick G1 here - Bonus 1
-    
-    return 1.0f;
+
+    float a = roughness;
+    float k = (a * a) / 2.0f;
+
+    float nom = NdotV;
+    float denom = NdotV * (1.0f - k) + k;
+
+    return nom / denom;
 }
 
 float GeometrySmith(float roughness, float NoV, float NoL) {
@@ -57,6 +72,7 @@ Vec3f IntegrateBRDF(Vec3f V, float roughness) {
 
     const int sample_count = 1024;
     Vec3f N = Vec3f(0.0, 0.0, 1.0);
+    float A = 0.f;
     for (int i = 0; i < sample_count; i++) {
         Vec2f Xi = Hammersley(i, sample_count);
         Vec3f H = ImportanceSampleGGX(Xi, N, roughness);
@@ -68,13 +84,15 @@ Vec3f IntegrateBRDF(Vec3f V, float roughness) {
         float NoV = std::max(dot(N, V), 0.0f);
         
         // TODO: To calculate (fr * ni) / p_o here - Bonus 1
-
+        float weight = (VoH * GeometrySmith(roughness, NoV, NoL)) / (NoV * NoH);
+        //float fr = (schlick_fresnel * GeometrySmith(roughness, NdotV, NdoL) * DistributionGGX(N, H, roughness)) / (4.0f * NdotV * NdoL);
+        //float result = (fr * NdoL) / pdf;
+        A += weight;
 
         // Split Sum - Bonus 2
         
     }
-
-    return Vec3f(1.0f);
+    return Vec3f((1.0 - A) / sample_count);
 }
 
 int main() {
@@ -93,8 +111,8 @@ int main() {
             data[(i * resolution + j) * 3 + 2] = uint8_t(irr.z * 255.0);
         }
     }
-    stbi_flip_vertically_on_write(true);
-    stbi_write_png("GGX_E_LUT.png", resolution, resolution, 3, data, resolution * 3);
+    //stbi_flip_vertically_on_write(true);
+    stbi_write_png("./result/GGX_E_LUT.png", resolution, resolution, 3, data, resolution * 3);
     
     std::cout << "Finished precomputed!" << std::endl;
     return 0;

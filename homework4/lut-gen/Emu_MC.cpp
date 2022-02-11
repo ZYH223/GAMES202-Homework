@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#define _USE_MATH_DEFINES 1
 #include <cmath>
 #include <sstream>
 #include <fstream>
@@ -83,7 +84,28 @@ Vec3f IntegrateBRDF(Vec3f V, float roughness, float NdotV) {
     samplePoints sampleList = squareToCosineHemisphere(sample_count);
     for (int i = 0; i < sample_count; i++) {
       // TODO: To calculate (fr * ni) / p_o here
-      
+        Vec3f L = normalize(sampleList.directions[i]);
+        float pdf = sampleList.PDFs[i];
+        float NdoL = dot(N, L);
+        Vec3f H = normalize(V + L);
+
+        // Schlick-Fresnel
+        const float R0 = 0.7f;
+        float& miu = NdotV;
+        //float miu = dot(H, V);
+        float x = 1.0f - miu;
+        const float x2 = x * x;
+        const float x5 = x2 * x2 * x;
+        float schlick_fresnel = R0 + (1 - R0) * x5;
+        //schlick_fresnel = 1.f;
+
+        // Fr
+        float fr = (schlick_fresnel * GeometrySmith(roughness, NdotV, NdoL)* DistributionGGX(N, H, roughness)) / (4.0f * NdotV * NdoL);
+        float result = (fr * NdoL) / pdf;
+
+        A += result;
+        B += result;
+        C += result;
     }
 
     return {A / sample_count, B / sample_count, C / sample_count};
@@ -105,8 +127,9 @@ int main() {
             data[(i * resolution + j) * 3 + 2] = uint8_t(irr.z * 255.0);
         }
     }
+    //data[0] = 1.0f; data[1] = 0.1f; data[2] = 0.1f;
     stbi_flip_vertically_on_write(true);
-    stbi_write_png("GGX_E_MC_LUT.png", resolution, resolution, 3, data, resolution * 3);
+    stbi_write_png("./result/GGX_E_MC_LUT.png", resolution, resolution, 3, data, resolution * 3);
     
     std::cout << "Finished precomputed!" << std::endl;
     return 0;
